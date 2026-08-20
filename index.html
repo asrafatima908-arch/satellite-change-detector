@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Satellite Change Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="console">
+    <div class="console-title">
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="status-dot"></span>
+          <h1>AI Satellite Change Detector</h1>
+        </div>
+        <div class="sub">GROUND STATION · CHANGE DETECTION MODULE v0.9</div>
+      </div>
+    </div>
+    <div class="telemetry">
+      UTC <b id="clock">--:--:--</b><br>
+      UPLINK <b style="color:var(--veg)">STABLE</b>
+    </div>
+  </header>
+
+  <section class="hero">
+    <svg class="orbit" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <circle cx="48" cy="48" r="34" fill="none" stroke="#1c2b3d" stroke-width="1"/>
+      <circle cx="48" cy="48" r="34" fill="none" stroke="#38bdf8" stroke-width="1.4" stroke-dasharray="4 7" opacity="0.55">
+        <animateTransform attributeName="transform" type="rotate" from="0 48 48" to="360 48 48" dur="18s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="48" cy="14" r="3.2" fill="#ffb347">
+        <animateTransform attributeName="transform" type="rotate" from="0 48 48" to="360 48 48" dur="7s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="48" cy="48" r="3" fill="#4ade80"/>
+    </svg>
+    <div class="hero-eyebrow"><span class="line"></span>Ground-station prototype</div>
+    <h2>See what changed on the ground, <em>between any two dates.</em></h2>
+    <p>Select a location and two imaging dates. The system compares imagery pixel-by-pixel, classifies land cover, and reports what actually changed — vegetation, water, or built-up area.</p>
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--red)"></span>Major change / new construction</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--yellow)"></span>Moderate change</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--veg)"></span>Vegetation change</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--water)"></span>Water-related change</div>
+    </div>
+  </section>
+
+  <div class="grid">
+    <!-- CONTROL PANEL -->
+    <div class="panel">
+      <div class="panel-label">Target Selection</div>
+
+      <div class="field">
+        <label for="placeSearch">Search anywhere in the world</label>
+        <div class="search-row">
+          <input type="text" id="placeSearch" placeholder="e.g. a village, locality, street, or landmark…" autocomplete="off">
+          <button class="btn-icon" id="searchBtn" type="button" aria-label="Search location">🔎</button>
+        </div>
+        <div id="searchResults" class="search-results"></div>
+      </div>
+
+      <div class="field">
+        <div id="worldMap"></div>
+        <div class="map-hint">Click the map to drop a pin, or search above by village, locality, street, or landmark.</div>
+        <div class="roi-row">
+          <button class="btn btn-ghost" id="drawRoiBtn" type="button" style="margin-top:0;">⬠ Draw ROI</button>
+          <button class="btn btn-ghost" id="clearRoiBtn" type="button" style="margin-top:0;">✕ Clear ROI</button>
+        </div>
+        <div class="roi-status" id="roiStatus">No region of interest drawn — live fetch will use a fixed square around the pin.</div>
+      </div>
+
+      <div class="coord-readout" id="coordReadout">
+        📍 <span id="pinName">Kanpur, India</span> &nbsp;·&nbsp; <span id="pinCoords">26.4499, 80.3319</span>
+      </div>
+
+      <div class="field" style="margin-top:14px;">
+        <label for="loc">Quick picks</label>
+        <select id="loc">
+          <option value="custom" id="customOption" hidden>📍 Custom location</option>
+          <optgroup label="Delhi — areas">
+            <option value="Connaught Place, Delhi|28.6315|77.2167">Connaught Place</option>
+            <option value="Dwarka, Delhi|28.5921|77.0460">Dwarka</option>
+            <option value="Rohini, Delhi|28.7495|77.0565">Rohini</option>
+            <option value="Saket, Delhi|28.5244|77.2066">Saket</option>
+            <option value="Yamuna Vihar, Delhi|28.6960|77.2760">Yamuna Vihar</option>
+          </optgroup>
+          <optgroup label="Mumbai — areas">
+            <option value="Bandra, Mumbai|19.0596|72.8295">Bandra</option>
+            <option value="Andheri, Mumbai|19.1136|72.8697">Andheri</option>
+            <option value="Powai, Mumbai|19.1176|72.9060">Powai</option>
+            <option value="Navi Mumbai|19.0330|73.0297">Navi Mumbai</option>
+            <option value="Dharavi, Mumbai|19.0400|72.8548">Dharavi</option>
+          </optgroup>
+          <optgroup label="Bengaluru — areas">
+            <option value="Koramangala, Bengaluru|12.9352|77.6245">Koramangala</option>
+            <option value="Whitefield, Bengaluru|12.9698|77.7500">Whitefield</option>
+            <option value="Electronic City, Bengaluru|12.8452|77.6602">Electronic City</option>
+            <option value="Yelahanka, Bengaluru|13.1007|77.5963">Yelahanka</option>
+          </optgroup>
+          <optgroup label="Kanpur — areas">
+            <option value="Kalyanpur, Kanpur|26.5041|80.2565">Kalyanpur</option>
+            <option value="Panki, Kanpur|26.4696|80.2685">Panki</option>
+            <option value="Kidwai Nagar, Kanpur|26.4325|80.3345">Kidwai Nagar</option>
+          </optgroup>
+          <optgroup label="Kolkata — areas">
+            <option value="Salt Lake City, Kolkata|22.5800|88.4180">Salt Lake City</option>
+            <option value="Howrah, Kolkata|22.5958|88.2636">Howrah</option>
+            <option value="New Town, Kolkata|22.5809|88.4756">New Town</option>
+          </optgroup>
+          <optgroup label="Asia — cities">
+            <option value="Kanpur|26.4499|80.3319">Kanpur, India</option>
+            <option value="Delhi|28.7041|77.1025">Delhi, India</option>
+            <option value="Mumbai|19.0760|72.8777">Mumbai, India</option>
+            <option value="Kolkata|22.5726|88.3639">Kolkata, India</option>
+            <option value="Bengaluru|12.9716|77.5946">Bengaluru, India</option>
+            <option value="Tokyo|35.6762|139.6503">Tokyo, Japan</option>
+            <option value="Shanghai|31.2304|121.4737">Shanghai, China</option>
+            <option value="Beijing|39.9042|116.4074">Beijing, China</option>
+            <option value="Jakarta|-6.2088|106.8456">Jakarta, Indonesia</option>
+            <option value="Singapore|1.3521|103.8198">Singapore</option>
+            <option value="Dubai|25.2048|55.2708">Dubai, UAE</option>
+            <option value="Bangkok|13.7563|100.5018">Bangkok, Thailand</option>
+          </optgroup>
+          <optgroup label="Europe">
+            <option value="London|51.5074|-0.1278">London, UK</option>
+            <option value="Paris|48.8566|2.3522">Paris, France</option>
+            <option value="Berlin|52.5200|13.4050">Berlin, Germany</option>
+            <option value="Rome|41.9028|12.4964">Rome, Italy</option>
+            <option value="Madrid|40.4168|-3.7038">Madrid, Spain</option>
+            <option value="Amsterdam|52.3676|4.9041">Amsterdam, Netherlands</option>
+            <option value="Moscow|55.7558|37.6173">Moscow, Russia</option>
+          </optgroup>
+          <optgroup label="Africa">
+            <option value="Cairo|30.0444|31.2357">Cairo, Egypt</option>
+            <option value="Lagos|6.5244|3.3792">Lagos, Nigeria</option>
+            <option value="Nairobi|-1.2921|36.8219">Nairobi, Kenya</option>
+            <option value="Cape Town|-33.9249|18.4241">Cape Town, South Africa</option>
+            <option value="Casablanca|33.5731|-7.5898">Casablanca, Morocco</option>
+          </optgroup>
+          <optgroup label="North America">
+            <option value="New York|40.7128|-74.0060">New York, USA</option>
+            <option value="Los Angeles|34.0522|-118.2437">Los Angeles, USA</option>
+            <option value="Chicago|41.8781|-87.6298">Chicago, USA</option>
+            <option value="Toronto|43.6532|-79.3832">Toronto, Canada</option>
+            <option value="Mexico City|19.4326|-99.1332">Mexico City, Mexico</option>
+          </optgroup>
+          <optgroup label="South America">
+            <option value="São Paulo|-23.5505|-46.6333">São Paulo, Brazil</option>
+            <option value="Rio de Janeiro|-22.9068|-43.1729">Rio de Janeiro, Brazil</option>
+            <option value="Buenos Aires|-34.6037|-58.3816">Buenos Aires, Argentina</option>
+            <option value="Lima|-12.0464|-77.0428">Lima, Peru</option>
+          </optgroup>
+          <optgroup label="Oceania">
+            <option value="Sydney|-33.8688|151.2093">Sydney, Australia</option>
+            <option value="Melbourne|-37.8136|144.9631">Melbourne, Australia</option>
+            <option value="Auckland|-36.8485|174.7633">Auckland, New Zealand</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="d1">Date 1 (before)</label>
+          <input type="date" id="d1">
+        </div>
+        <div class="field">
+          <label for="d2">Date 2 (after)</label>
+          <input type="date" id="d2">
+        </div>
+      </div>
+
+      <div class="panel-label" style="margin-top:22px;">Imagery Source</div>
+
+      <div class="field">
+        <label for="imgSource">Satellite provider</label>
+        <select id="imgSource">
+          <option value="modis">NASA MODIS (Terra) — GIBS · any date since 2000</option>
+          <option value="viirs">NASA VIIRS (Suomi NPP) — GIBS · sharper, since 2015</option>
+          <option value="sentinel">Copernicus Sentinel-2 — 10m detail · needs free key</option>
+          <option value="esri">Esri World Imagery — high-res, current pass only</option>
+          <option value="crosscheck">🔗 Cross-check on other satellite sites</option>
+        </select>
+      </div>
+      <div class="field" id="sentinelKeyField" style="display:none;">
+        <label for="sentinelId">Sentinel Hub instance ID</label>
+        <input type="text" id="sentinelId" placeholder="paste your free instance ID">
+        <div class="map-hint">~10m resolution. Free instance ID from <a href="https://www.sentinel-hub.com/" target="_blank" rel="noopener">sentinel-hub.com</a>.</div>
+      </div>
+
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="modeStandardBtn" type="button" data-mode="standard">Standard (RGB)</button>
+        <button class="mode-btn" id="modeNdviBtn" type="button" data-mode="ndvi">🌿 Vegetation Index</button>
+      </div>
+
+      <button class="btn btn-primary" id="fetchLiveBtn" type="button">🛰️ Fetch live satellite images</button>
+      <div class="hint" id="liveHint">Real NASA MODIS imagery for the pinned location. Cloud cover varies by day — if a fetch looks unusable, upload your own images below.</div>
+      <div id="liveStatus" class="live-status"></div>
+      <img id="esriPreview" alt="Esri high-resolution reference imagery" style="display:none;width:100%;border-radius:8px;border:1px solid var(--line-bright);margin-top:8px;">
+      <div id="providerResults" class="search-results"></div>
+
+      <div class="or-divider"><span>or upload manually</span></div>
+
+      <div class="field">
+        <label>Before image (Date 1)</label>
+        <div class="dropzone" id="zone1" tabindex="0" role="button" aria-label="Browse for before image">
+          <img class="dz-preview" id="preview1" alt="">
+          <div class="dz-icon">📁</div>
+          <div class="dz-label">Browse image</div>
+          <div class="dz-hint">or drag &amp; drop — <u>click to browse</u></div>
+          <span class="fname" id="fname1"></span>
+          <input type="file" id="file1" accept="image/*">
+        </div>
+      </div>
+      <div class="field">
+        <label>After image (Date 2)</label>
+        <div class="dropzone" id="zone2" tabindex="0" role="button" aria-label="Browse for after image">
+          <img class="dz-preview" id="preview2" alt="">
+          <div class="dz-icon">📁</div>
+          <div class="dz-label">Browse image</div>
+          <div class="dz-hint">or drag &amp; drop — <u>click to browse</u></div>
+          <span class="fname" id="fname2"></span>
+          <input type="file" id="file2" accept="image/*">
+        </div>
+      </div>
+
+      <button class="btn btn-ghost" id="demoBtn" type="button">⚙ Load demo imagery</button>
+
+      <button class="btn btn-primary" id="analyzeBtn" type="button" style="margin-top:16px;" disabled>🔍 Analyze Changes</button>
+      <div class="hint" id="engineHint">Classification engine: <span class="badge badge-demo">DEMO / PROTOTYPE</span> heuristic pipeline (k-means colour clusters + NDVI/NDWI-proxy rules) — runs entirely in your browser. See Methodology section below for the real-model architecture.</div>
+
+      <div class="panel-label" style="margin-top:22px;">ML Backend (optional)</div>
+      <div class="field">
+        <label for="apiEndpoint">Trained-model API endpoint</label>
+        <input type="text" id="apiEndpoint" placeholder="e.g. https://your-server/api/classify">
+        <div class="hint">If you deploy a real change-detection model (U-Net / Siamese CNN) behind this endpoint, the app will POST both images + bbox + dates there and use its response instead of the in-browser heuristic. Leave blank to stay in DEMO/PROTOTYPE mode — nothing is ever sent anywhere unless you fill this in.</div>
+      </div>
+
+      <div class="panel-label" style="margin-top:22px;">Multi-temporal Analysis</div>
+      <button class="btn btn-ghost" id="addObservationBtn" type="button" style="margin-top:0;" disabled>➕ Add this result as an observation</button>
+      <div class="hint">Builds a 2022 → 2026-style trend for this ROI by stacking multiple before/after runs. Run an analysis first, then add it here.</div>
+    </div>
+
+    <!-- RESIZER -->
+    <div class="resizer" id="dragResizer">
+      <div class="resizer-handle">⯇⯈</div>
+    </div>
+
+    <!-- VIEWPORT -->
+    <div class="viewport" id="viewport">
+      <div class="viewport-empty" id="emptyState">
+        <div class="glyph">🛰️</div>
+        <div>Awaiting imagery.<br>Load the demo tile or upload before/after images to begin.</div>
+      </div>
+
+      <div id="results" style="display:none;">
+        <div class="panes">
+          <div class="pane">
+            <div class="pane-head"><span>Before</span><span id="d1Label">—</span></div>
+            <div class="pane-wrap">
+              <canvas id="canvasBefore" width="320" height="220"></canvas>
+              <div class="scanline" id="scanBefore"></div>
+            </div>
+          </div>
+          <div class="pane">
+            <div class="pane-head"><span>After</span><span id="d2Label">—</span></div>
+            <div class="pane-wrap">
+              <canvas id="canvasAfter" width="320" height="220"></canvas>
+              <div class="scanline" id="scanAfter"></div>
+            </div>
+          </div>
+          <div class="pane">
+            <div class="pane-head"><span>AI Change Map</span><span id="pctLabel">—</span></div>
+            <div class="pane-wrap">
+              <canvas id="canvasDiff" width="320" height="220"></canvas>
+              <div class="scanline" id="scanDiff"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="alert" id="alertBox"></div>
+
+        <div class="stats">
+          <div class="stat-card" id="cardBuiltup">
+            <div class="stat-head"><span class="stat-label">🏗️ Built-up area</span><span class="stat-value" id="valBuiltup">—</span></div>
+            <div class="bar-track"><div class="bar-fill" id="barBuiltup" style="background:var(--red);width:0%"></div></div>
+          </div>
+          <div class="stat-card" id="cardVeg">
+            <div class="stat-head"><span class="stat-label">🌳 Vegetation</span><span class="stat-value" id="valVeg">—</span></div>
+            <div class="bar-track"><div class="bar-fill" id="barVeg" style="background:var(--veg);width:0%"></div></div>
+          </div>
+          <div class="stat-card" id="cardWater">
+            <div class="stat-head"><span class="stat-label">💧 Water coverage</span><span class="stat-value" id="valWater">—</span></div>
+            <div class="bar-track"><div class="bar-fill" id="barWater" style="background:var(--water);width:0%"></div></div>
+          </div>
+        </div>
+
+        <div class="area-line">
+          <span>📍 Area analyzed: <b id="areaKm">—</b></span>
+          <span>Pixels reclassified: <b id="pctChanged">—</b></span>
+          <span>Location: <b id="locEcho">—</b></span>
+        </div>
+
+        <div class="compare-section">
+          <div class="panel-label" style="margin-bottom:10px;">Drag to compare</div>
+          <div class="compare-wrap" id="compareWrap">
+            <canvas id="compareAfterCanvas" width="320" height="220"></canvas>
+            <canvas id="compareBeforeCanvas" width="320" height="220"></canvas>
+            <div class="compare-handle" id="compareHandle"></div>
+            <span class="compare-tag left">Before</span>
+            <span class="compare-tag right">After</span>
+          </div>
+        </div>
+
+        <div class="ndvi-section" id="ndviSection" style="display:none;">
+          <div class="panel-label" style="margin-bottom:10px;">Vegetation index (approx.)</div>
+          <div class="ndvi-panes">
+            <div class="pane">
+              <div class="pane-head"><span>NDVI-style · Before</span><span id="ndviD1Label">—</span></div>
+              <canvas id="canvasNdviBefore" width="320" height="220"></canvas>
+            </div>
+            <div class="pane">
+              <div class="pane-head"><span>NDVI-style · After</span><span id="ndviD2Label">—</span></div>
+              <canvas id="canvasNdviAfter" width="320" height="220"></canvas>
+            </div>
+          </div>
+          <div class="ndvi-stats">
+            <span>Mean index before: <b id="ndviBeforeVal">—</b></span>
+            <span>Mean index after: <b id="ndviAfterVal">—</b></span>
+            <span>Δ: <b id="ndviDeltaVal">—</b></span>
+          </div>
+          <div class="ndvi-note">Approximate greenness index derived from a false-colour NIR-capable band composite (not calibrated surface reflectance) — indicative of trend, not a scientific NDVI measurement.</div>
+        </div>
+
+        <div class="severity-panel" id="severityPanel">
+          <div class="panel-label">Change Severity / Risk Score <span class="badge badge-demo" style="margin-left:8px;">DEMO SCORING MODEL</span></div>
+          <div class="severity-head">
+            <div class="severity-score-wrap">
+              <span class="severity-score" id="severityScore">—</span>
+              <span style="color:var(--text-faint);font-family:var(--font-mono);font-size:12px;">/100</span>
+            </div>
+            <span class="severity-band" id="severityBand">—</span>
+          </div>
+          <div class="severity-bar-track"><div class="severity-bar-fill" id="severityBarFill" style="width:0%;background:var(--veg);"></div></div>
+          <div class="severity-factors">
+            <div>Changed area<b id="sevFactorArea">—</b></div>
+            <div>Primary category<b id="sevFactorCategory">—</b></div>
+            <div>Model confidence<b id="sevFactorConfidence">—</b></div>
+            <div>Persistence<b id="sevFactorPersistence">—</b></div>
+          </div>
+          <div class="severity-reason" id="severityReason"></div>
+        </div>
+
+        <div class="explain-panel" id="explainPanel">
+          <div class="panel-label">Why was this region flagged? <span class="badge badge-demo" style="margin-left:8px;">DEMO MODEL</span></div>
+          <div class="explain-hint">Click anywhere on the AI Change Map above to inspect that spot.</div>
+          <div id="explainBody">
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-faint);">No point selected yet — click a changed (coloured) area on the AI Change Map.</div>
+          </div>
+        </div>
+
+        <div class="warning-panel" id="warningPanel"></div>
+
+        <div class="intel-panel" id="intelPanel"></div>
+
+        <div class="multitemp-panel" id="multitempPanel">
+          <div class="panel-label">Multi-temporal Trend <span class="badge badge-demo" id="mtBadge" style="margin-left:8px;">DEMO DATA</span></div>
+          <div id="mtEmpty" class="mt-empty">No observations added yet. Run an analysis, then click "Add this result as an observation" in the left panel to start building a 2022→2026-style trend for this ROI.</div>
+          <div id="mtContent" style="display:none;">
+            <div class="mt-list" id="mtList"></div>
+            <div class="mt-chart-wrap">
+              <canvas id="mtChart" width="640" height="220" style="width:100%;height:auto;"></canvas>
+              <div class="mt-chart-legend">
+                <span><i style="background:var(--veg)"></i>Vegetation %</span>
+                <span><i style="background:var(--water)"></i>Water %</span>
+                <span><i style="background:var(--red)"></i>Built-up %</span>
+              </div>
+            </div>
+            <div class="ndvi-stats" id="mtSummary" style="margin-top:10px;"></div>
+            <button class="btn btn-ghost" id="clearObservationsBtn" type="button" style="margin-top:10px;">✕ Clear observations</button>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="downloadPdfBtn" type="button">📄 Download PDF Report</button>
+          <button class="btn btn-ghost" id="downloadBtn" type="button" style="margin-top:0;">📝 Raw data (.txt)</button>
+          <button class="btn btn-ghost" id="resetBtn" type="button" style="margin-top:0;">↺ New analysis</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="methodology-section">
+    <div class="panel-label">Methodology &amp; Technical Transparency</div>
+    <p style="color:var(--text-dim);font-size:13.5px;max-width:760px;line-height:1.6;">Every stage below runs today. Stages marked <span class="badge badge-real">REAL</span> use actual satellite data / actual arithmetic on it. Stages marked <span class="badge badge-demo">DEMO / HEURISTIC</span> are a working stand-in for a trained neural network — the numbers are computed, but the classifier is rule-based, not learned.</p>
+    <div class="pipeline-flow">
+      <div class="pipeline-step">Satellite imagery <span class="badge badge-real" style="margin-left:6px;">REAL*</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Blank/cloud check <span class="badge badge-real" style="margin-left:6px;">REAL</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Alignment (same bbox/px grid) <span class="badge badge-real" style="margin-left:6px;">REAL</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Spectral feature extraction (NDVI/NDWI-proxy) <span class="badge badge-demo" style="margin-left:6px;">DEMO</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">AI/ML change detection <span class="badge badge-demo" style="margin-left:6px;">DEMO</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Change classification (6 categories) <span class="badge badge-demo" style="margin-left:6px;">DEMO</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Severity assessment <span class="badge badge-real" style="margin-left:6px;">REAL calc</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Visualization <span class="badge badge-real" style="margin-left:6px;">REAL</span></div><div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">Alert / report <span class="badge badge-real" style="margin-left:6px;">REAL</span></div>
+    </div>
+    <p style="color:var(--text-faint);font-family:var(--font-mono);font-size:10.5px;">*Imagery is real when fetched from MODIS/VIIRS/Sentinel-2/Esri or uploaded by you. Demo-tile mode uses a synthetic procedural scene, clearly labelled wherever it's used.</p>
+  </section>
+
+  <footer>
+    <span>Prototype pipeline: preprocessing → pixel classification → change detection → report</span>
+    <span id="footerStamp">—</span>
+  </footer>
+</div>
+
+<!-- Copilot Studio chatbox -->
+<div id="copilotPanel" aria-hidden="true">
+  <div class="cp-head">
+    <div class="cp-head-title"><span class="cp-status-dot" id="cpStatusDot"></span> SIH Assistant · Copilot Studio</div>
+    <div class="cp-head-btns">
+      <button class="cp-icon-btn" id="cpSettingsBtn" type="button" title="Connection settings">⚙</button>
+      <button class="cp-icon-btn" id="cpCloseBtn" type="button" title="Close">✕</button>
+    </div>
+  </div>
+  <div class="cp-settings" id="cpSettings">
+    <div class="hint" style="margin:0 0 4px;padding:8px 10px;background:var(--bg-panel);border:1px solid var(--line-bright);border-left:3px solid var(--water);border-radius:6px;">
+      💡 Want this to answer <b style="color:var(--text-primary);">any</b> question, not just authored topics? This chatbox already forwards any free-text message to your bot as-is — nothing here restricts what can be asked. If replies feel limited, enable <b style="color:var(--text-primary);">Generative AI → Generative answers</b> (or "boost conversational coverage") in your Copilot Studio bot's own Settings, so it can respond beyond its authored Topics.
+    </div>
+    <div>
+      <label for="cpTokenEndpoint">Token endpoint URL (recommended)</label>
+      <input type="text" id="cpTokenEndpoint" placeholder="https://<region>.directline.botframework.com/v3/directline/tokens/generate?...">
+      <div class="hint" style="margin-top:4px;">From Copilot Studio → Publish → Custom website channel. Safe to use in the browser — it never exposes your bot secret.</div>
+    </div>
+    <div>
+      <label for="cpSecret">— or — Direct Line secret (fallback)</label>
+      <input type="password" id="cpSecret" placeholder="Direct Line secret">
+      <div class="hint" style="margin-top:4px;color:var(--red);">⚠ This exposes your secret to anyone viewing page source/network traffic. Only use for local testing — prefer the token endpoint above for anything shared.</div>
+    </div>
+    <button class="btn btn-primary" id="cpConnectBtn" type="button" style="margin-top:2px;">🔌 Connect</button>
+    <div class="live-status" id="cpConnStatus"></div>
+  </div>
+  <button class="cp-context-btn" id="cpSendContextBtn" type="button" disabled>📎 Send current analysis results to Copilot</button>
+  <div class="cp-messages" id="cpMessages">
+    <div class="cp-msg system">Ask me anything about this site — how it works, the severity score, imagery sources, categories, reports, and so on. For general questions beyond the site, connect a Copilot Studio bot via ⚙.</div>
+  </div>
+  <div class="cp-inputrow">
+    <textarea id="cpInput" placeholder="Ask anything about this site…" rows="1"></textarea>
+    <button class="cp-send-btn" id="cpSendBtn" type="button">➤</button>
+  </div>
+</div>
+<button id="copilotBubble" type="button" title="Open Copilot assistant" aria-label="Open Copilot assistant">
+  🤖<span class="dot" id="cpBubbleDot"></span>
+</button>
+
+<script src="app.js"></script>
+</body>
+</html>
